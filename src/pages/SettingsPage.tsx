@@ -1,6 +1,6 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, useEffect } from 'react'
 import { exportAllData, importAllData } from '../db/repository'
-import { uploadBackup, downloadBackup } from '../lib/googleDrive'
+import { uploadBackup, downloadBackup, requestToken, preloadGoogle } from '../lib/googleDrive'
 import { isGoogleConfigured } from '../lib/googleConfig'
 
 export function SettingsPage() {
@@ -9,12 +9,22 @@ export function SettingsPage() {
   const [driveBusy, setDriveBusy] = useState(false)
   const importRef = useRef<HTMLInputElement>(null)
 
+  // 画面表示時にGoogle認証を温めておく（タップ時に即ポップアップを出すため）
+  useEffect(() => {
+    if (isGoogleConfigured()) {
+      preloadGoogle().catch(() => { /* 失敗時はボタン押下時に再試行 */ })
+    }
+  }, [])
+
   const handleDriveBackup = async () => {
     setDriveBusy(true)
-    setDriveStatus('Google Drive にバックアップ中...')
+    setDriveStatus('Google にログイン中...')
     try {
+      // ① タップ直後にまず認証（ここでポップアップ）→ ② 重い書き出し → ③ アップロード
+      const token = await requestToken()
+      setDriveStatus('Google Drive にバックアップ中...')
       const json = await exportAllData()
-      const { updated } = await uploadBackup(json)
+      const { updated } = await uploadBackup(json, token)
       setDriveStatus(updated ? 'バックアップを更新しました！' : 'バックアップを作成しました！')
     } catch (err) {
       setDriveStatus('バックアップに失敗しました: ' + (err instanceof Error ? err.message : String(err)))
@@ -26,9 +36,11 @@ export function SettingsPage() {
   const handleDriveRestore = async () => {
     if (!confirm('Google Drive のバックアップで、現在のデータをすべて上書きします。続けますか？')) return
     setDriveBusy(true)
-    setDriveStatus('Google Drive から復元中...')
+    setDriveStatus('Google にログイン中...')
     try {
-      const json = await downloadBackup()
+      const token = await requestToken()
+      setDriveStatus('Google Drive から復元中...')
+      const json = await downloadBackup(token)
       if (!json) {
         setDriveStatus('Drive にバックアップが見つかりませんでした')
         return

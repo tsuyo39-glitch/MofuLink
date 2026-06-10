@@ -44,8 +44,33 @@ function loadGis(): Promise<void> {
   return gisLoadPromise
 }
 
-// アクセストークンをメモリに保持（タブを閉じるまで有効。期限切れ時は再取得）
+// 事前生成しておくトークンクライアントと、要求中の解決関数
+let tokenClient: TokenClient | null = null
+let pendingResolve: ((token: string) => void) | null = null
+let pendingReject: ((err: Error) => void) | null = null
 let cachedToken: { value: string; expiresAt: number } | null = null
+
+// アプリ起動時（または画面表示時）に呼んでGISを温めておく。
+// これにより、タップ時に await を挟まず即座に認証ポップアップを出せる（iOS Safari対策）。
+export async function preloadGoogle(): Promise<void> {
+  await loadGis()
+  if (tokenClient) return
+  if (!window.google?.accounts?.oauth2) throw new Error('Google認証を初期化できませんでした')
+  tokenClient = window.google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: GOOGLE_SCOPE,
+    callback: (resp) => {
+      if (resp.error || !resp.access_token) {
+        pendingReject?.(new Error('Googleの認証に失敗しました: ' + (resp.error ?? 'unknown')))
+      } else {
+        cachedToken = { value: resp.access_token, expiresAt: Date.now() + (resp.expires_in ?? 3600) * 1000 }
+        pendingResolve?.(resp.access_token)
+      }
+      pendingResolve = null
+      pendingReject = null
+    },
+  })
+}
 
 export function isSignedIn(): boolean {
   return !!cachedToken && cachedToken.expiresAt > Date.now()
@@ -55,33 +80,20 @@ export function signOut(): void {
   cachedToken = null
 }
 
-// アクセストークンを取得する（必要ならGoogleのログイン/同意画面を出す）
-export async function getAccessToken(interactive = true): Promise<string> {
+// アクセストークンを取得する。
+// 重要: タップ直後に最初に呼ぶこと。new Promise の実行時に requestAccessToken を
+// 同期的に呼ぶため、ユーザー操作の文脈が保たれ、iOSでもポップアップがブロックされない。
+export function requestToken(): Promise<string> {
   if (cachedToken && cachedToken.expiresAt > Date.now() + 30_000) {
-    return cachedToken.value
+    return Promise.resolve(cachedToken.value)
   }
-  await loadGis()
-  if (!window.google?.accounts?.oauth2) {
-    throw new Error('Google認証を初期化できませんでした')
+  if (!tokenClient) {
+    return Promise.reject(new Error('Google認証の準備中です。数秒後にもう一度お試しください。'))
   }
   return new Promise<string>((resolve, reject) => {
-    const client = window.google!.accounts.oauth2.initTokenClient({
-      client_id: GOOGLE_CLIENT_ID,
-      scope: GOOGLE_SCOPE,
-      callback: (resp) => {
-        if (resp.error || !resp.access_token) {
-          reject(new Error('Googleの認証に失敗しました: ' + (resp.error ?? 'unknown')))
-          return
-        }
-        cachedToken = {
-          value: resp.access_token,
-          expiresAt: Date.now() + (resp.expires_in ?? 3600) * 1000,
-        }
-        resolve(resp.access_token)
-      },
-    })
-    // interactive=false のときは同意済みなら無音で取得を試みる
-    client.requestAccessToken({ prompt: interactive ? '' : 'none' })
+    pendingResolve = resolve
+    pendingReject = reject
+    tokenClient!.requestAccessToken() // 同期的に呼び出してポップアップを開く
   })
 }
 
@@ -98,14 +110,10 @@ async function findBackupFileId(token: string): Promise<string | null> {
 }
 
 // JSON文字列をDriveにアップロード（既存があれば上書き、なければ新規作成）
-export async function uploadBackup(json: string): Promise<{ updated: boolean }> {
-  const token = await getAccessToken()
+export async function uploadBackup(json: string, token: string): Promise<{ updated: boolean }> {
   const existingId = await findBackupFileId(token)
 
-  const metadata = {
-    name: BACKUP_FILENAME,
-    mimeType: 'application/json',
-  }
+  const metadata = { name: BACKUP_FILENAME, mimeType: 'application/json' }
   const boundary = 'mofulink_boundary_' + Math.random().toString(16).slice(2)
   const body =
     `--${boundary}\r\n` +
@@ -133,8 +141,7 @@ export async function uploadBackup(json: string): Promise<{ updated: boolean }> 
 }
 
 // Driveからバックアップ(JSON文字列)をダウンロードする。無ければ null。
-export async function downloadBackup(): Promise<string | null> {
-  const token = await getAccessToken()
+export async function downloadBackup(token: string): Promise<string | null> {
   const id = await findBackupFileId(token)
   if (!id) return null
   const res = await fetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`, {
