@@ -98,13 +98,27 @@ export function requestToken(): Promise<string> {
 }
 
 // バックアップファイルのIDを探す（drive.file スコープなので自分が作ったファイルのみ見える）
+// Google APIのエラー本文から理由を取り出して読みやすくする
+async function describeError(res: Response): Promise<string> {
+  let detail = ''
+  try {
+    const body = await res.json()
+    const reason = body?.error?.errors?.[0]?.reason
+    const message = body?.error?.message
+    detail = [reason, message].filter(Boolean).join(': ')
+  } catch {
+    detail = ''
+  }
+  return `${res.status}${detail ? ' ' + detail : ''}`
+}
+
 async function findBackupFileId(token: string): Promise<string | null> {
   const q = encodeURIComponent(`name='${BACKUP_FILENAME}' and trashed=false`)
   const res = await fetch(
     `https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name,modifiedTime)&orderBy=modifiedTime desc`,
     { headers: { Authorization: `Bearer ${token}` } }
   )
-  if (!res.ok) throw new Error('Driveのファイル検索に失敗しました (' + res.status + ')')
+  if (!res.ok) throw new Error('Driveのファイル検索に失敗しました (' + (await describeError(res)) + ')')
   const data = await res.json()
   return data.files?.[0]?.id ?? null
 }
@@ -136,7 +150,7 @@ export async function uploadBackup(json: string, token: string): Promise<{ updat
     },
     body,
   })
-  if (!res.ok) throw new Error('Driveへのアップロードに失敗しました (' + res.status + ')')
+  if (!res.ok) throw new Error('Driveへのアップロードに失敗しました (' + (await describeError(res)) + ')')
   return { updated: !!existingId }
 }
 
@@ -147,6 +161,6 @@ export async function downloadBackup(token: string): Promise<string | null> {
   const res = await fetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`, {
     headers: { Authorization: `Bearer ${token}` },
   })
-  if (!res.ok) throw new Error('Driveからのダウンロードに失敗しました (' + res.status + ')')
+  if (!res.ok) throw new Error('Driveからのダウンロードに失敗しました (' + (await describeError(res)) + ')')
   return res.text()
 }
