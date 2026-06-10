@@ -1,4 +1,4 @@
-import { useState, useRef, type FormEvent } from 'react'
+import { useState, useRef, useEffect, type FormEvent } from 'react'
 import { petRepo } from '../../db/repository'
 import { generateId, calcAge, calcDaysSince } from '../../lib/utils'
 import { compressImage } from '../../lib/imageUtils'
@@ -18,20 +18,32 @@ export function PetForm({ pet, onSaved, onCancel }: Props) {
   const [adoptedDate, setAdoptedDate] = useState(pet?.adoptedDate ?? '')
   const [favoriteFood, setFavoriteFood] = useState(pet?.favoriteFood ?? '')
   const [memo, setMemo] = useState(pet?.memo ?? '')
-  const [photoBlob, setPhotoBlob] = useState<Blob | undefined>(pet?.photoBlob)
+  // 写真を新しく選び直したかどうか。false の間は元の pet.photoBlob を保持する
+  // （編集時に写真を触らなくても画像が外れないようにするため）
+  const [newPhotoBlob, setNewPhotoBlob] = useState<Blob | undefined>(undefined)
+  const [photoChanged, setPhotoChanged] = useState(false)
   const [photoUrl, setPhotoUrl] = useState<string | undefined>(
-    pet?.photoBlob ? URL.createObjectURL(pet.photoBlob) : undefined
+    () => (pet?.photoBlob ? URL.createObjectURL(pet.photoBlob) : undefined)
   )
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
+  // 自分で作成したオブジェクトURLは破棄してメモリリークを防ぐ
+  useEffect(() => {
+    return () => {
+      if (photoUrl) URL.revokeObjectURL(photoUrl)
+    }
+  }, [photoUrl])
+
   const handlePhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
+    // 写真選択をキャンセルした場合は何も変更しない（既存写真を維持）
     if (!file) return
     try {
       const compressed = await compressImage(file)
-      setPhotoBlob(compressed)
+      setNewPhotoBlob(compressed)
+      setPhotoChanged(true)
       setPhotoUrl(URL.createObjectURL(compressed))
     } catch (err) {
       setError('写真の処理に失敗しました: ' + (err instanceof Error ? err.message : String(err)))
@@ -49,7 +61,8 @@ export function PetForm({ pet, onSaved, onCancel }: Props) {
         name: name.trim(),
         species,
         gender,
-        photoBlob,
+        // 写真を選び直していなければ、必ず元の写真を引き継ぐ
+        photoBlob: photoChanged ? newPhotoBlob : pet?.photoBlob,
         birthday: birthday || undefined,
         adoptedDate: adoptedDate || undefined,
         favoriteFood: favoriteFood || undefined,

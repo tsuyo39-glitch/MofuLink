@@ -43,7 +43,9 @@
       "Bash(git init *)",
       "Bash(git symbolic-ref *)",
       "Bash(git add *)",
-      "Bash(git commit -q -m 'MofuLink Phase1+1.5: ペット記録PWA + GitHub Pages配布設定 *)"
+      "Bash(git commit -q -m 'MofuLink Phase1+1.5: ペット記録PWA + GitHub Pages配布設定 *)",
+      "Bash(brew install *)",
+      "Bash(curl -s https://tsuyo39-glitch.github.io/MofuLink/)"
     ]
   }
 }
