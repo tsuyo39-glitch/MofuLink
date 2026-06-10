@@ -83,17 +83,21 @@ export function signOut(): void {
 // アクセストークンを取得する。
 // 重要: タップ直後に最初に呼ぶこと。new Promise の実行時に requestAccessToken を
 // 同期的に呼ぶため、ユーザー操作の文脈が保たれ、iOSでもポップアップがブロックされない。
-export function requestToken(): Promise<string> {
+export async function requestToken(): Promise<string> {
   if (cachedToken && cachedToken.expiresAt > Date.now() + 30_000) {
-    return Promise.resolve(cachedToken.value)
+    return cachedToken.value
+  }
+  // 準備が未完了なら初期化を待つ（リロード直後にタップした場合のフォールバック）
+  if (!tokenClient) {
+    await preloadGoogle()
   }
   if (!tokenClient) {
-    return Promise.reject(new Error('Google認証の準備中です。数秒後にもう一度お試しください。'))
+    throw new Error('Google認証を初期化できませんでした')
   }
   return new Promise<string>((resolve, reject) => {
     pendingResolve = resolve
     pendingReject = reject
-    tokenClient!.requestAccessToken() // 同期的に呼び出してポップアップを開く
+    tokenClient!.requestAccessToken() // ポップアップを開く
   })
 }
 
