@@ -1,9 +1,46 @@
 import { useRef, useState } from 'react'
 import { exportAllData, importAllData } from '../db/repository'
+import { uploadBackup, downloadBackup } from '../lib/googleDrive'
+import { isGoogleConfigured } from '../lib/googleConfig'
 
 export function SettingsPage() {
   const [status, setStatus] = useState('')
+  const [driveStatus, setDriveStatus] = useState('')
+  const [driveBusy, setDriveBusy] = useState(false)
   const importRef = useRef<HTMLInputElement>(null)
+
+  const handleDriveBackup = async () => {
+    setDriveBusy(true)
+    setDriveStatus('Google Drive にバックアップ中...')
+    try {
+      const json = await exportAllData()
+      const { updated } = await uploadBackup(json)
+      setDriveStatus(updated ? 'バックアップを更新しました！' : 'バックアップを作成しました！')
+    } catch (err) {
+      setDriveStatus('バックアップに失敗しました: ' + (err instanceof Error ? err.message : String(err)))
+    } finally {
+      setDriveBusy(false)
+    }
+  }
+
+  const handleDriveRestore = async () => {
+    if (!confirm('Google Drive のバックアップで、現在のデータをすべて上書きします。続けますか？')) return
+    setDriveBusy(true)
+    setDriveStatus('Google Drive から復元中...')
+    try {
+      const json = await downloadBackup()
+      if (!json) {
+        setDriveStatus('Drive にバックアップが見つかりませんでした')
+        return
+      }
+      await importAllData(json)
+      setDriveStatus('復元しました！ページをリロードしてください')
+    } catch (err) {
+      setDriveStatus('復元に失敗しました: ' + (err instanceof Error ? err.message : String(err)))
+    } finally {
+      setDriveBusy(false)
+    }
+  }
 
   const handleExport = async () => {
     setStatus('エクスポート中...')
@@ -44,6 +81,41 @@ export function SettingsPage() {
       </div>
 
       <div className="flex-1 p-4 flex flex-col gap-4">
+        {/* Google Drive バックアップ（Phase 2） */}
+        <div className="bg-white rounded-2xl shadow-md p-5 flex flex-col gap-3">
+          <h2 className="font-semibold text-gray-800">☁️ Google Drive バックアップ</h2>
+          {isGoogleConfigured() ? (
+            <>
+              <p className="text-sm text-gray-500">
+                自分の Google Drive に「MofuLink-backup.json」として保存します。機種変更後も、新しい端末で同じ Google アカウントにログインして「復元」すれば全データが戻ります。
+              </p>
+              <button
+                onClick={handleDriveBackup}
+                disabled={driveBusy}
+                className="bg-sky-500 text-white py-3 rounded-xl font-medium disabled:opacity-50"
+              >
+                今すぐバックアップ
+              </button>
+              <button
+                onClick={handleDriveRestore}
+                disabled={driveBusy}
+                className="border border-emerald-500 text-emerald-600 py-3 rounded-xl font-medium disabled:opacity-50"
+              >
+                Drive から復元
+              </button>
+              {driveStatus && (
+                <div className="bg-sky-50 border border-sky-200 text-sky-700 rounded-xl p-3 text-sm break-words">
+                  {driveStatus}
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="text-sm text-amber-600 bg-amber-50 rounded-xl p-3">
+              Google Drive 連携はまだ設定されていません（クライアントID未設定）。設定後に利用できます。
+            </p>
+          )}
+        </div>
+
         <div className="bg-white rounded-2xl shadow-md p-5 flex flex-col gap-3">
           <h2 className="font-semibold text-gray-800">バックアップ（エクスポート）</h2>
           <p className="text-sm text-gray-500">全データを JSON ファイルとしてダウンロードします。機種変更前などに保存しておいてください。</p>
